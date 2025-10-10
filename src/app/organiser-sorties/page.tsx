@@ -3,24 +3,18 @@
 import Link from 'next/link';
 import { ChevronLeft, Zap, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+
+// Importe les résultats de la vérification des URLs.
+// checkResults est censé contenir : { timestamp: string, categories: [{ title: string, links: [{ url: string, status: string }] }] }
+// Bien que le JSON ait la structure complète, nous utilisons ici la liste hardcodée pour la structure de la page.
 import checkResults from '@/lib/checkUrlsResults.json';
 
-{category.links.map((url) => (
-  <div key={url} className="flex justify-between items-center border p-3 rounded-lg hover:bg-muted transition">
-    <span className="truncate text-sm">
-      {url} {checkResults[url] && <span className="text-red-600">{checkResults[url]}</span>}
-    </span>
-    <Button asChild size="sm" variant="secondary">
-      <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center">
-        Ouvrir <ExternalLink className="h-4 w-4 ml-2" />
-      </a>
-    </Button>
-  </div>
-))}
+// --- Définition des structures de données (à utiliser pour la structure de la page) ---
+// Note: Le fichier checkUrlsResults.json est la source des statuts mis à jour,
+// tandis que cette liste est la source des catégories et des liens à afficher.
 
-// Structure des catégories et des liens
-const categories = [
+const categoriesData = [
   {
     title: "Événements des établissements privés gratuits et payants",
     links: [
@@ -140,7 +134,7 @@ const categories = [
       "https://www.rencontres-occitanie.fr/",
       "https://museum.toulouse-metropole.fr/agenda/type/rencontres-conferences/",
       "https://www.tse-fr.eu/fr/events/conferences",
-      "https://www.arnaud-bernard.net/conversations-socratiques/",        
+      "https://www.arnaud-bernard.net/conversations-socratiques/",      
     ],
   },
     {
@@ -165,7 +159,7 @@ const categories = [
       "https://www.univ-tlse2.fr/accueil/agenda",
       "https://culture.univ-tlse2.fr/accueil/a-venir/a-la-fabrique",
       "https://www.ut-capitole.fr/accueil/campus/espace-media/actualites",
-      "https://www.inp-toulouse.fr/fr/actualites.html",     
+      "https://www.inp-toulouse.fr/fr/actualites.html",      
       "https://www.univ-toulouse.fr/des-campus-attractifs/culture",
     ],
   },
@@ -251,6 +245,25 @@ const categories = [
 export default function OrganiserSortiesPage() {
   const [openCategory, setOpenCategory] = useState<string | null>(null);
 
+  // Utilise useMemo pour créer une map URL -> Status à partir du JSON importé
+  const allStatuses = useMemo(() => {
+    if (!checkResults || !checkResults.categories) return {};
+
+    const statusMap: { [key: string]: string } = {};
+    
+    // Le JSON contient des liens sous forme d'objets { url: string, status: string }
+    checkResults.categories.forEach(category => {
+      category.links.forEach(link => {
+        // La structure JSON est supposée avoir 'url' et 'status' pour chaque lien
+        if (link.url) {
+            statusMap[link.url] = link.status || 'Non vérifié';
+        }
+      });
+    });
+
+    return statusMap;
+  }, []); // Dépend de checkResults, qui est statique après l'import
+
   return (
     <div className="flex flex-col gap-8 p-4 md:p-8">
       <header className="flex justify-between items-center">
@@ -272,7 +285,7 @@ export default function OrganiserSortiesPage() {
         </p>
 
         <div className="space-y-6">
-          {categories.map((category) => (
+          {categoriesData.map((category) => ( // Utilisation de categoriesData (hardcodé)
             <div key={category.title} className="bg-background p-4 rounded-lg shadow-sm border">
               <button
                 onClick={() =>
@@ -290,19 +303,38 @@ export default function OrganiserSortiesPage() {
 
               {openCategory === category.title && (
                 <div className="mt-3 space-y-2">
-                  {category.links.map((url) => (
-                    <div
-                      key={url}
-                      className="flex justify-between items-center border p-3 rounded-lg hover:bg-muted transition"
-                    >
-                      <span className="truncate text-sm">{url}</span>
-                      <Button asChild size="sm" variant="secondary">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center">
-                          Ouvrir <ExternalLink className="h-4 w-4 ml-2" />
-                        </a>
-                      </Button>
-                    </div>
-                  ))}
+                  {category.links.map((url) => {
+                    const status = allStatuses[url]; // Récupération du statut à partir de la map
+                    
+                    // Détermine la couleur en fonction du statut
+                    let statusColor = 'text-muted-foreground'; // Par défaut
+                    if (status && status.startsWith('2')) { // Statut 2xx (Succès)
+                        statusColor = 'text-green-600';
+                    } else if (status && (status.startsWith('4') || status.startsWith('5'))) { // Statut 4xx ou 5xx (Erreur)
+                        statusColor = 'text-red-600';
+                    }
+
+                    return (
+                        <div
+                          key={url}
+                          className="flex justify-between items-center border p-3 rounded-lg hover:bg-muted transition"
+                        >
+                          <span className="truncate text-sm">
+                            {url}
+                            {status && (
+                                <span className={`ml-2 font-mono text-xs font-medium ${statusColor}`}>
+                                    [{status}]
+                                </span>
+                            )}
+                          </span>
+                          <Button asChild size="sm" variant="secondary">
+                            <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center">
+                              Ouvrir <ExternalLink className="h-4 w-4 ml-2" />
+                            </a>
+                          </Button>
+                        </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
