@@ -64,16 +64,17 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
         setApiKey(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
     }, []);
 
-    const externalEvents = useMemo(() => {
-        // Filtre les événements qui sont de type EXTERNAL (3) et qui ont une adresse
+    const addressEvents = useMemo(() => {
+        // Filtre UNIQUEMENT les événements qui ont une adresse dans entity_metadata.location
+        // (Cela inclut nécessairement les entity_type 3 - EXTERNAL)
         return initialEvents.filter(event => 
-            event.entity_type === 3 && event.entity_metadata?.location
+            !!event.entity_metadata?.location // '!!' convertit la valeur en boolean pour s'assurer qu'elle est définie et non vide
         );
     }, [initialEvents]);
 
     // Hook d'effet pour effectuer le géocodage des adresses
     useEffect(() => {
-        if (!apiKey || geocodingStatus === 'complete' || externalEvents.length === 0) return;
+        if (!apiKey || geocodingStatus === 'complete' || addressEvents.length === 0) return;
 
         setGeocodingStatus('loading');
         
@@ -85,7 +86,11 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
         // Fonction pour géocoder un seul événement
         const geocodeEvent = (event: DiscordEvent) => {
             const location = event.entity_metadata?.location;
-            if (!location) return;
+            if (!location) {
+                // Ce cas ne devrait pas arriver grâce au filtre addressEvents, mais par sécurité
+                geocodedCount++;
+                return; 
+            }
 
             // Utiliser le géocodage de Google Maps
             geocoder.geocode({ address: location }, (results, status) => {
@@ -100,7 +105,7 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                         isGeocoded: true,
                     });
                 } else {
-                    console.warn(`Géocodage échoué pour l'événement ${event.name}: ${status}`);
+                    console.warn(`Géocodage échoué pour l'événement ${event.name} (Adresse: ${location}): ${status}`);
                     tempMappedEvents.push({
                         ...event,
                         position: { lat: 0, lng: 0 }, // Position par défaut/invalide
@@ -109,23 +114,24 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                 }
 
                 // Si tous les événements ont été traités
-                if (geocodedCount === externalEvents.length) {
+                if (geocodedCount === addressEvents.length) {
                     setMappedEvents(tempMappedEvents.filter(e => e.isGeocoded));
                     setGeocodingStatus('complete');
                 }
             });
         };
 
-        // Lancer le géocodage pour tous les événements externes
-        externalEvents.forEach(geocodeEvent);
+        // Lancer le géocodage pour tous les événements avec adresse
+        addressEvents.forEach(geocodeEvent);
 
-    }, [apiKey, externalEvents]);
+    }, [apiKey, addressEvents]);
 
 
     const renderMap = () => (
         <APIProvider apiKey={apiKey!}>
             <Map
-                defaultCenter={toulousePosition}
+                // Centre la carte sur Toulouse par défaut, ou ajuste si des événements sont géocodés
+                defaultCenter={mappedEvents.length > 0 ? mappedEvents[0].position : toulousePosition}
                 defaultZoom={13}
                 mapId="toulouse-map"
                 gestureHandling={'greedy'}
@@ -136,7 +142,7 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                     <Marker 
                         key={event.id} 
                         position={event.position} 
-                        title={`${event.name} - ${event.scheduled_start_time}`} 
+                        title={`${event.name} - ${event.entity_metadata?.location}`} 
                         // Personnalisation simple de l'icône pour les événements
                         icon={{
                             path: window.google.maps.SymbolPath.CIRCLE,
@@ -148,10 +154,6 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                     />
                 ))}
                 
-                {/* Vous pouvez laisser les "popularSpots" si vous voulez */}
-                {/* {popularSpots.map((spot) => (
-                    <Marker key={spot.id} position={spot.position} title={spot.name} />
-                ))} */}
             </Map>
         </APIProvider>
     );
@@ -161,14 +163,14 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
         if (!apiKey) {
             return (
                 <div className="flex h-full w-full items-center justify-center bg-muted">
-                    <p className="text-muted-foreground">La carte ne peut pas être chargée : Clé API manquante.</p>
+                    <p className="text-muted-foreground">La carte ne peut pas être chargée : Clé API Google Maps manquante.</p>
                 </div>
             );
         }
-        if (externalEvents.length === 0) {
+        if (addressEvents.length === 0) {
             return (
                 <div className="flex h-full w-full items-center justify-center bg-muted">
-                    <p className="text-muted-foreground">Aucun événement externe à afficher sur la carte.</p>
+                    <p className="text-muted-foreground">Aucun événement avec une adresse de lieu à afficher sur la carte.</p>
                 </div>
             );
         }
@@ -177,11 +179,23 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                 <div className="flex h-full w-full items-center justify-center bg-muted">
                     <p className="text-muted-foreground flex items-center gap-2">
                         <PartyPopper className="animate-spin h-5 w-5 text-primary" />
-                        Chargement des événements...
+                        Chargement et géocodage de {addressEvents.length} événement(s)...
                     </p>
                 </div>
             );
         }
+        
+        // Si le géocodage est complet mais qu'aucun événement n'a pu être localisé
+        if (geocodingStatus === 'complete' && mappedEvents.length === 0) {
+             return (
+                <div className="flex h-full w-full items-center justify-center bg-muted">
+                    <p className="text-muted-foreground">
+                        {addressEvents.length} événement(s) trouvé(s) mais le géocodage a échoué pour tous (adresse non reconnue).
+                    </p>
+                </div>
+            );
+        }
+
         return renderMap();
     }
 
@@ -197,9 +211,12 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
             {apiKey ? (
                 <Alert className="mb-4">
                     <PartyPopper className="h-4 w-4" />
-                    <AlertTitle>Événements trouvés</AlertTitle>
+                    <AlertTitle>Statut du Géocodage</AlertTitle>
                     <AlertDescription>
-                        {externalEvents.length} événements externes sont en cours de géocodage ou affichés.
+                        {geocodingStatus === 'loading' && `Tentative de géocodage de ${addressEvents.length} événement(s)...`}
+                        {geocodingStatus === 'complete' && 
+                            `${mappedEvents.length} marqueur(s) affiché(s) sur ${addressEvents.length} événement(s) avec adresse.`
+                        }
                     </AlertDescription>
                 </Alert>
             ) : (
