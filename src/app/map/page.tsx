@@ -46,7 +46,33 @@ async function fetchEventsData(): Promise<DiscordEvent[]> {
             console.error(`Erreur lors de la récupération des événements Discord: ${res.status} ${res.statusText}`);
             return [];
         }
-        return res.json();
+        
+        const events: DiscordEvent[] = await res.json();
+
+        // --- DÉBOGAGE AJOUTÉ : Affichage des lieux dans la console du serveur ---
+        console.log('--- Débogage des lieux des événements Discord (Côté Serveur) ---');
+        if (events.length === 0) {
+            console.log('Aucun événement récupéré.');
+        } else {
+            events.forEach(event => {
+                const location = event.entity_metadata?.location;
+                const type = event.entity_type;
+                const locationStatus = location ? location : (type === 3 ? 'NON DÉFINI (EXTERNAL)' : 'N/A (DISCORD)');
+                
+                if (type === 3 && location) {
+                     console.log(`[EXTERNAL - ✅] ${event.name}: "${location}"`);
+                } else if (type === 3) {
+                     console.log(`[EXTERNAL - ❌] ${event.name}: Lieu manquant ou vide.`);
+                } else {
+                     console.log(`[DISCORD - N/A] ${event.name}: (Type ${type})`);
+                }
+            });
+        }
+        console.log('-------------------------------------------------------------------');
+        // -------------------------------------------------------------------
+
+        return events;
+
     } catch (err) {
         console.error('Erreur de réseau ou de parsing lors de la récupération des événements Discord:', err);
         return [];
@@ -79,6 +105,13 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
         setGeocodingStatus('loading');
         
         // Initialiser le Géocodeur après l'APIProvider
+        // NOTE: window.google.maps est disponible uniquement après que l'APIProvider ait chargé la librairie
+        if (!window.google || !window.google.maps || !window.google.maps.Geocoder) {
+            console.error("L'API Google Maps (Geocoder) n'est pas encore chargée.");
+            setGeocodingStatus('error');
+            return;
+        }
+
         const geocoder = new window.google.maps.Geocoder();
         let geocodedCount = 0;
         const tempMappedEvents: MappedEvent[] = [];
@@ -87,7 +120,6 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
         const geocodeEvent = (event: DiscordEvent) => {
             const location = event.entity_metadata?.location;
             if (!location) {
-                // Ce cas ne devrait pas arriver grâce au filtre addressEvents, mais par sécurité
                 geocodedCount++;
                 return; 
             }
@@ -196,6 +228,16 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
             );
         }
 
+        if (geocodingStatus === 'error') {
+             return (
+                <div className="flex h-full w-full items-center justify-center bg-muted">
+                    <p className="text-muted-foreground">
+                        Erreur de chargement de l'API Google Maps (Geocoder).
+                    </p>
+                </div>
+            );
+        }
+
         return renderMap();
     }
 
@@ -217,6 +259,8 @@ function EventMapClient({ initialEvents }: { initialEvents: DiscordEvent[] }) {
                         {geocodingStatus === 'complete' && 
                             `${mappedEvents.length} marqueur(s) affiché(s) sur ${addressEvents.length} événement(s) avec adresse.`
                         }
+                        {geocodingStatus === 'error' && `Une erreur est survenue lors du chargement de l'API.`}
+                        {geocodingStatus === 'pending' && `En attente de chargement...`}
                     </AlertDescription>
                 </Alert>
             ) : (
